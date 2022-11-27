@@ -1,0 +1,416 @@
+---
+title: Curvas de crecimiento bacteriano
+subtitle: | 
+          ![](C:/Users/Lenovo/Desktop/claseR_2022/LOGO-UNAM.png){width=150px style="display: block; margin:0 auto" align=center} 
+author: |
+        | Universidad Nacional Autónoma de México
+        |
+        |
+        | Centro de Ciencias Génomicas
+        |
+        | *M. en C. Oscar Bruno Aguilar Luviano*
+        
+date: "`r Sys.Date()`"
+urlcolor: blue
+#header-includes:
+#- \titlegraphic{\centering \includegraphics[width=1.5cm]{C:/Users/Lenovo/Desktop/claseR_2022/LOGO-UNAM.png}}
+bibliography:
+  C:/Users/Lenovo/Desktop/claseR_2022/referencias.bib
+output:
+  html_document: 
+    toc: true
+theme: "SimpleDarkBlue"
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Descripción del experimento
+
+* Bacteria: *Escherichia coli* MG1655
+* Tiempo de medición de OD: cada 20 min
+* Estrés ambiental: Exposición a un gradiente de estreptomicina, usando una placa de 96 pozos:
+
+![](C:/Users/Lenovo/Desktop/claseR_2022/figuras/96-well-plate-template.jpg){width=300px style="display: block; margin:0 auto" align=center} 
+
+Previamente se crecio a la bacteria durante ~16 horas en medio libre de estrés.
+
+# Cargar librerias
+
+Tener previamente instaladas las siguientes paqueterías:
+
+```{r, echo=TRUE,eval=TRUE,warning=FALSE,message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(growthcurver)
+library(growthrates)
+```
+
+
+# Cargar archivo
+
+Un comando útil para encontrar la ruta de los archivos es:
+
+```{r, echo=TRUE,eval=FALSE}
+file.choose()
+```
+
+Para cargar nuestro archivo:
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+strep<-read.csv("C:\\Users\\Lenovo\\Desktop\\claseR_2022\\archivos\\curva_dosis-respuesta\\2022noviembre13_STR_dosis-respuesta.csv",check.names = FALSE)
+
+strep<-strep[,-c(1,2)] # eliminar la columna del tiempo y temperatura
+```
+
+
+```{r, echo=FALSE,eval=TRUE,message=FALSE,warning=FALSE}
+strep[,c(1:10)] %>%
+  head() %>%
+  knitr::kable()
+```
+
+# Eliminar los pozos control
+
+Restar el fondo, es decir, restar los valores donde no se inoculo.
+
+```{r, echo=TRUE, eval=TRUE,warning=FALSE, message=FALSE}
+
+ctrl<-strep %>%
+        select(c(paste0(LETTERS[1:8],12))) %>% # filtrar la columna 12
+        as.matrix() %>% # convertir a una matriz
+        mean() # obtener el promedio total
+
+strep<-strep - ctrl # restar fondo
+strep <- strep %>%
+          select(-c(paste0(LETTERS[1:8],12)))
+
+data_original<-strep
+
+```
+
+```{r, echo=FALSE,eval=TRUE,message=FALSE,warning=FALSE}
+strep[,c(1:10)] %>%
+  head() %>%
+  knitr::kable()
+```
+
+# Agregar el vector con concentraciones
+
+Las dosis [ug/mL] usadas en el tratamiento fueron las siguientes:
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+dosis<-c(0,5,10,15,20,25,30,35,40,45,50)
+dosis
+```
+
+# Indicar el numero de replicas
+
+```{r, echo=TRUE,eval=TRUE, message=FALSE, warning=FALSE}
+replicas<-paste0("rep",1:8)
+replicas
+```
+
+# Agregar el tiempo
+
+```{r, echo=TRUE,eval=TRUE, message=FALSE,}
+# tiempo en horas
+n<-nrow(strep)
+tiempo<-(1:n - 1)/3
+tiempo<-as.character(tiempo) # solo como tipo caracter se puede usar la siguiente funcion
+tiempo
+```
+
+# Unir los datos
+
+```{r,echo=TRUE,eval=TRUE,warning=FALSE,message=FALSE}
+strep<-cbind(tiempo,strep)
+strep<-melt(strep)
+strep$tiempo<-as.numeric(strep$tiempo) # regresarla a valores numericos
+str(strep)
+```
+```{r, echo=TRUE,eval=TRUE,warning=FALSE,message=FALSE}
+strep<-data.frame(
+          strep,
+          dosis=rep(dosis,times=8,each=n),
+          replica=rep(replicas,each=11*n)
+          )
+
+str(strep)
+```
+
+
+# Graficar 
+
+### Grafica total
+```{r, echo=TRUE, eval=TRUE,message=FALSE,warning=FALSE}
+ggplot(strep, aes(x=tiempo, y=value,group=variable,col=replica)) +
+  geom_line() +
+  ylab("OD 630nm") +
+  xlab("Time(h)") +
+  theme_classic()
+```
+
+### Separar por dosis
+
+```{r, echo=TRUE, eval=TRUE,message=FALSE,warning=FALSE}
+ggplot(strep, aes(x=tiempo, y=value,group=variable,col=replica)) +
+  geom_line() +
+  ylab("OD 630nm") +
+  xlab("Time(h)") +
+  facet_wrap(.~dosis) + # nueva linea
+  theme_classic()
+```
+
+### Seleccionar solo una dosis especifica
+
+```{r, echo=TRUE, eval=TRUE,message=FALSE,warning=FALSE}
+strep %>%
+  filter(dosis==0) %>%
+  ggplot(aes(x=tiempo, y=value,group=variable,col=replica)) +
+  geom_line() +
+  ylab("OD 630nm") +
+  xlab("Time(h)") +
+  theme_classic()
+
+```
+
+# Obtener promedio y desviación estandar
+
+```{r, echo=TRUE,eval=TRUE,warning=FALSE,message=FALSE}
+
+strep<-data_original
+
+n<-nrow(strep) # calcular el numero de renglones
+m<-11 # numero de dosis distintas
+data_parcial<-c()
+a<-c(); b<-c(); c<-c(); d<-c()
+for (j in 1:m) {
+  for (i in 1:n) {
+    data_parcial<-strep %>%
+                   select(paste0(LETTERS[1:8],j)) 
+    
+    a[i]<-mean(as.numeric(data_parcial[i,]))
+    
+    b[i]<-sd(as.numeric(data_parcial[i,]))
+    
+  }
+c<-c(c,a); a<-c()
+d<-c(d,b); b<-c()
+}
+
+```
+
+## Unir datos
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+
+strep<-data.frame( 
+        tiempo=rep(as.numeric(tiempo),times=11),
+        dosis=as.character(rep(dosis,each=73)),
+        promedio=c,
+        desv_estand=d)
+
+str(strep)
+
+```
+
+
+
+## Graficar
+
+```{r, echo=TRUE, eval=TRUE,message=FALSE,warning=FALSE}
+strep$dosis<-factor(strep$dosis,unique(strep$dosis))
+
+ggplot(strep,aes(x=tiempo,y=promedio, group=dosis,  col=dosis)) +
+  geom_line() +
+  geom_errorbar(aes(ymin=promedio-desv_estand, ymax=promedio+desv_estand), width=.2) +
+  ylab("OD 630nm") +
+  labs(col="Estreptomicina [ug/mL]") +
+  facet_wrap(.~dosis) +
+  theme_classic()
+```
+
+
+# Curva dosis-respuesta
+
+Seleccionamos un tiempo especifico, por ejemplo:
+
+```{r, echo=TRUE,eval=TRUE,warning=FALSE,message=FALSE}
+strep$dosis<-as.numeric(as.character(strep$dosis))
+
+strep %>%
+  filter(tiempo==12) %>% # seleccionar el punto especifico en el tiempo
+  ggplot(aes(x=as.numeric(dosis),y=promedio)) + 
+  geom_line() +
+  geom_errorbar(aes(ymin=promedio-desv_estand, ymax=promedio+desv_estand), width=.2) +
+  xlab("Estreptomicina [ug/mL]") +
+  ylab("OD 630nm") +
+  theme_classic()
+```
+
+
+
+# Librerías especializadas en calculo/modelos de crecimiento bacteriano
+
+https://rpubs.com/angelov/growthcurver
+
+https://cran.r-project.org/web/packages/growthrates/vignettes/Introduction.html#estimation-of-growth-rates
+
+
+# Calcular tasas de crecimiento
+
+Para realizar esto utilizaremos la paquetería `growthcurver`:
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+strep_parcial<- strep %>%
+                  filter(dosis==0)
+
+model <- SummarizeGrowth(strep_parcial$tiempo, strep_parcial$promedio)
+
+predict(model$model) # regresa los valores de OD predichos por el modelo
+```
+
+```{r, echo=TRUE,eval=TRUE,warning=FALSE,message=FALSE}
+plot(model)
+```
+
+
+Podemos consultar distintos valores calculados, de acuerdo al [manual](https://cran.r-project.org/web/packages/growthcurver/growthcurver.pdf).
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+model$vals
+```
+
+# Comparar tasas de crecimiento
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+concentracion<-dosis
+n<-length(unique(strep$dosis))
+growth_rate<-c()
+for (i in 1:n) {
+  strep_parcial<- strep %>%
+                  filter(dosis==concentracion[i])
+
+model <- SummarizeGrowth(strep_parcial$tiempo, strep_parcial$promedio)
+
+growth_rate[i]<-as.numeric(model$vals$r)
+}
+
+growth_rate
+```
+
+Hacer un nuevo dataframe que incluya las dosis:
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+growth_rate<-data.frame(dosis,
+                growth_rate)
+
+growth_rate
+
+```
+
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+#growth_rate$dosis<-factor(as.character(growth_rate$dosis),levels(growth_rate$dosis))
+
+ggplot(growth_rate, aes(x=dosis,y=growth_rate*3)) +
+  geom_bar(stat = "identity") +
+  #geom_line() +
+  xlab("Estreptomicina [ug/mL]") +
+  ylab("Tasa de crecimiento (generaciones/h)") +
+  theme_classic()
+
+```
+
+
+# Crecimiento exponencial vs logístico
+
+```{r, echo=FALSE,eval=TRUE,warning=FALSE,message=FALSE}
+knitr::include_graphics(
+  "C:\\Users\\Lenovo\\Desktop\\claseR_2022\\figuras\\crecimiento_exponencial_logistico.png")
+```
+
+
+
+### Crecimiento máximo
+
+```{r, echo=TRUE,eval=TRUE,warning=FALSE,message=FALSE}
+concentracion<-dosis
+n<-length(unique(strep$dosis))
+growth_max<-c()
+for (i in 1:n) {
+  strep_parcial<- strep %>%
+                  filter(dosis==concentracion[i])
+
+model <- SummarizeGrowth(strep_parcial$tiempo, strep_parcial$promedio)
+
+growth_max[i]<-as.numeric(model$vals$k)
+}
+
+growth_max
+```
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+growth_max<-data.frame(dosis,
+                growth_max)
+
+growth_max
+
+```
+
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+#growth_rate$dosis<-factor(as.character(growth_rate$dosis),levels(growth_rate$dosis))
+
+ggplot(growth_max, aes(x=dosis,y=growth_max)) +
+  geom_line() +
+  xlab("Estreptomicina [ug/mL]") +
+  ylab("Crecimiento máximo (OD 630nm)") +
+  theme_classic()
+
+```
+
+# Calcular la duración de la fase lag
+
+Ahora haremos uso de la función `fit_easylinear` y `coef` de la paquetería `growthrates`.
+
+```{r, echo=TRUE,eval=TRUE,warning=FALSE,message=FALSE}
+concentracion<-dosis
+n<-length(unique(strep$dosis))
+lag_phase<-c()
+for (i in 1:n) {
+  strep_parcial<- strep %>%
+                  filter(dosis==concentracion[i])
+
+model <- fit_easylinear(strep_parcial$tiempo, strep_parcial$promedio)
+
+model<-coef(model)
+
+lag_phase[i]<-as.numeric(model[4])
+}
+
+lag_phase
+```
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+lag_phase<-data.frame(dosis,
+                lag_phase)
+
+lag_phase
+
+```
+
+```{r, echo=TRUE,eval=TRUE,message=FALSE,warning=FALSE}
+#growth_rate$dosis<-factor(as.character(growth_rate$dosis),levels(growth_rate$dosis))
+
+ggplot(lag_phase, aes(x=dosis,y=lag_phase)) +
+  geom_line() +
+  xlab("Estreptomicina [ug/mL]") +
+  ylab("Duración fase lag (h)") +
+  theme_classic()
+
+```
